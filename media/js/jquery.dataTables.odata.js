@@ -5,6 +5,7 @@
  * @version     1.0.5
  * @file        jquery.dataTables.odata.js
  * @authors     Jovan & Vida Popovic
+ * @modified    Ben Rei Briongos
  *
  * @copyright Copyright 2014 Jovan & Vida Popovic, all rights reserved.
  *
@@ -194,17 +195,17 @@ function fnServerOData(sUrl, aoData, fnCallback, oSettings, oCustomFilters) {
                         oDataPredicateOperand = 'le';
                         break;
                     case 'Starts with':
-                        formattedSearchCondition = "startswith(" + oDataPredicateColumn + "," + oDataPredicateValue + ") eq true";
+                        formattedSearchCondition = "startswith(" + oDataPredicateColumn + "," + oDataPredicateValue + ")";
                         bIsFunction = true;
                         break;
                     case 'End with':
-                        formattedSearchCondition = "endswith(" + oDataPredicateColumn + "," + oDataPredicateValue + ") eq true";
+                        formattedSearchCondition = "endswith(" + oDataPredicateColumn + "," + oDataPredicateValue + ")";
                         bIsFunction = true;
                         break;
                     case 'Contains':
                     	//Update for odata v4
                         //formattedSearchCondition = "substring(" + oDataPredicateColumn + ",1) eq " + oDataPredicateValue + "";
-                        formattedSearchCondition = "contains(" + oDataPredicateColumn + "," + "" +oDataPredicateValue + ""+ ")";
+                        formattedSearchCondition = "contains(" + oDataPredicateColumn + "," + oDataPredicateValue + ")";
                         bIsFunction = true;
                         break;
                     //default:
