@@ -1,7 +1,8 @@
-﻿/**
+/// <reference path="_references.js" />
+/**
  * @summary     DataTables OData addon
  * @description Enables jQuery DataTables plugin to read data from OData service.
- * @version     1.0.3
+ * @version     1.0.5
  * @file        jquery.dataTables.odata.js
  * @authors     Jovan & Vida Popovic
  *
@@ -18,7 +19,7 @@
  * 
  */
 
-function fnServerOData(sUrl, aoData, fnCallback, oSettings) {
+function fnServerOData(sUrl, aoData, fnCallback, oSettings, oCustomFilters) {
 
     var oParams = {};
     $.each(aoData, function (i, value) {
@@ -44,11 +45,15 @@ function fnServerOData(sUrl, aoData, fnCallback, oSettings) {
         if (sFieldName === null || !isNaN(Number(sFieldName))) {
             return;
         }
-        if (data.$select == null) {
-            data.$select = sFieldName;
-        } else {
-            data.$select += "," + sFieldName;
+        //if (value.bVisible || value.bKey)
+        {
+            if (data.$select == null) {
+                data.$select = sFieldName;
+            } else {
+                data.$select += "," + sFieldName;
+            }
         }
+        
     });
 
     if (oSettings.oFeatures.bServerSide) {
@@ -73,29 +78,58 @@ function fnServerOData(sUrl, aoData, fnCallback, oSettings) {
                 var sFieldName = value.sName || value.mData;
                 var columnFilter = oParams["sSearch_" + i]; //fortunately columnFilter's _number matches the index of aoColumns
 
-                if (oParams.sSearch !== null && oParams.sSearch !== "" && value.bSearchable) {
+                if ((oParams.sSearch !== null && oParams.sSearch !== "" || columnFilter !== null && columnFilter !== "") && value.bSearchable) {
                     switch (value.sType) {
-                    case 'string':
-                    case 'html':
+                        case 'string':
+                        case 'html':
 
-                        // asFilters.push("substringof('" + oParams.sSearch + "', " + sFieldName + ")");
-                        // substringof does not work in v4???
-                        asFilters.push("indexof(tolower(" + sFieldName + "), '" + oParams.sSearch.toLowerCase() + "') gt -1");
-                        break;
+                            if (oParams.sSearch) //!== null && oParams.sSearch !== "")
+                            {
+                                // asFilters.push("substringof('" + oParams.sSearch + "', " + sFieldName + ")");
+                                // substringof does not work in v4???
+                                asFilters.push("indexof(tolower(" + sFieldName + "), '" + oParams.sSearch.toLowerCase() + "') gt -1");
+                            }
 
-                    case 'date':
-                    case 'numeric':
-                    default:
-                        // Currently, we cannot search date and numeric fields (exception on the OData service side)
+                            if (columnFilter) {
+                                asColumnFilters.push("indexof(tolower(" + sFieldName + "), '" + columnFilter.toLowerCase() + "') gt -1");
+                            }
+                            break;
+
+                        case 'date':
+                        case 'numeric':
+                            var fnFormatValue =
+                                (value.sType == 'numeric') ?
+                                    function (val) { return val; } :
+                                    function (val) {
+                                        // Here is a mess. OData V2, V3, and V4 se different formats of DateTime literals.
+                                        switch (oSettings.oInit.iODataVersion) {
+                                            // V2 works with the following format:
+                                            // http://services.odata.org/V2/OData/OData.svc/Products?$filter=(ReleaseDate+lt+2014-04-29T09:00:00.000Z)                                                              
+                                            case 4: return (new Date(val)).toISOString();
+                                                // V3 works with the following format:
+                                                // http://services.odata.org/V3/OData/OData.svc/Products?$filter=(ReleaseDate+lt+datetimeoffset'2008-01-01T07:00:00')
+                                            case 3: return "datetimeoffset'" + (new Date(val)).toISOString() + "'";
+                                                // V2 works with the following format:
+                                                // http://services.odata.org/V2/OData/OData.svc/Products?$filter=(ReleaseDate+lt+DateTime'2014-04-29T09:00:00.000Z')
+                                            case 2: return "DateTime'" + (new Date(val)).toISOString() + "'";
+                                        }
+                                    }
+
+                            // Currently, we cannot use global search for date and numeric fields (exception on the OData service side)
+                            // However, individual column filters are supported in form lower~upper
+                            if (columnFilter && columnFilter !== null && columnFilter !== "" && columnFilter !== "~") {
+                                asRanges = columnFilter.split("~");
+                                if (asRanges[0] !== "") {
+                                    asColumnFilters.push("(" + sFieldName + " gt " + fnFormatValue(asRanges[0]) + ")");
+                                }
+
+                                if (asRanges[1] !== "") {
+                                    asColumnFilters.push("(" + sFieldName + " lt " + fnFormatValue(asRanges[1]) + ")");
+                                }
+                            }
+                            break;
+                        default:
                     }
-                }
-
-                /*  This currently does not exclude 'number' and 'date' passed via jquery.dataTables.columnFilter
-                    The simplest workaround is to use { type: null } in the columnFilter plugin to exclude it. 
-                    This isn't a bad thing, as it is better to explicitly exlude it so that the user doesn't see the UI for the column filter.
-                */
-                if (columnFilter !== null && columnFilter !== "") {
-                    asColumnFilters.push("indexof(tolower(" + sFieldName + "), '" + columnFilter.toLowerCase() + "') gt -1");
                 }
             });
 
@@ -110,12 +144,89 @@ function fnServerOData(sUrl, aoData, fnCallback, oSettings) {
                 data.$filter = asColumnFilters.join(" and ");
             }
         }
+        var formatPredicateValue = function (predicateColumn, predicateValue) {
+            var formattedValue = '';
+            switch (predicateColumn.sType) {
+                case 'string':
+                case 'html':
+                    formattedValue = "'" + $.trim(predicateValue) + "'";
+                    break;
+                case 'numeric':
+                case 'date':
+                    formattedValue = predicateValue
+                    break;
+            }
+            return formattedValue;
+        }
+
+        if (oCustomFilters.length > 0) {
+            debugger;
+            var customFilter = [];
+            $.each(oCustomFilters, function (index, filter) {
+                var oDataPredicateColumn = filter.PredicateColumn.mData;
+                var oDataPredicateOperand = '';
+                var oDataPredicateValue = formatPredicateValue(filter.PredicateColumn, filter.PredicateValue);
+
+                var oDataFilterOperand = '';                
+                if (filter.FilterOperand.op)
+                    oDataFilterOperand = filter.FilterOperand.op.toLowerCase();
+                else
+                    oDataFilterOperand = 'and'; 
+                if (index == oCustomFilters.length - 1)
+                    oDataFilterOperand = '';//last condition
+
+                var formattedSearchCondition = '';
+                var bIsFunction = false;
+                switch (filter.PredicateOperand.op) {
+                    case 'Equals':
+                        oDataPredicateOperand = 'eq';
+                        break;
+                    case 'Greator than':
+                        oDataPredicateOperand = 'gt';
+                        break;
+                    case 'Greator than Or equal to':
+                        oDataPredicateOperand = 'ge';
+                        break;
+                    case 'Less than':
+                        oDataPredicateOperand = 'lt';
+                        break;
+                    case 'Less than or equal to':
+                        oDataPredicateOperand = 'le';
+                        break;
+                    case 'Starts with':
+                        formattedSearchCondition = "startswith(" + oDataPredicateColumn + "," + oDataPredicateValue + ") eq true";
+                        bIsFunction = true;
+                        break;
+                    case 'End with':
+                        formattedSearchCondition = "endswith(" + oDataPredicateColumn + "," + oDataPredicateValue + ") eq true";
+                        bIsFunction = true;
+                        break;
+                    case 'Contains':
+                    	//Update for odata v4
+                        //formattedSearchCondition = "substring(" + oDataPredicateColumn + ",1) eq " + oDataPredicateValue + "";
+                        formattedSearchCondition = "contains(" + oDataPredicateColumn + "," + "" +oDataPredicateValue + ""+ ")";
+                        bIsFunction = true;
+                        break;
+                    //default:
+                    //    if (filter.PredicateColumn.sType == 'string')
+                    //        oDataPredicateOperand = 'eq';
+                }
+                if (bIsFunction == false) {
+                    formattedSearchCondition = oDataPredicateColumn + ' ' + oDataPredicateOperand + ' ' + oDataPredicateValue;
+                }
+                formattedSearchCondition = formattedSearchCondition + ' ' + oDataFilterOperand;
+                bIsFunction = false;
+                customFilter.push(formattedSearchCondition);
+            });
+            if (customFilter.length > 0)
+                data.$filter = customFilter.join(" ");
+        }
 
         var asOrderBy = [];
         for (var i = 0; i < oParams.iSortingCols; i++) {
-			asOrderBy.push(oParams["mDataProp_" + oParams["iSortCol_" + i]] + " " + (oParams["sSortDir_" + i] || ""));
+            asOrderBy.push(oParams["mDataProp_" + oParams["iSortCol_" + i]] + " " + (oParams["sSortDir_" + i] || ""));
         }
-		
+
         if (asOrderBy.length > 0) {
             data.$orderby = asOrderBy.join();
         }
@@ -131,8 +242,8 @@ function fnServerOData(sUrl, aoData, fnCallback, oSettings) {
             var oDataSource = {};
 
             // Probe data structures for V4, V3, and V2 versions of OData response
-            oDataSource.aaData = data.value || (data.d && data.d.results) || data.d;
-            var iCount = (data["@odata.count"]) ? data["@odata.count"] : ((data["odata.count"]) ? data["odata.count"] : ((data.__count) ? data.__count : (data.d && data.d.__count)));
+            oDataSource.aaData = data.value || (data.d && data.d.results) || data.d || data.Items || data;
+            var iCount = (data["TotalCount"]) ? data["TotalCount"] : ((data["odata.count"]) ? data["odata.count"] : ((data.__count) ? data.__count : (data.d && data.d.__count)));
 
             if (iCount == null) {
                 if (oDataSource.aaData.length === oSettings._iDisplayLength) {
